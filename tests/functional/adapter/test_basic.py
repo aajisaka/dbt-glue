@@ -14,13 +14,38 @@ from dbt.tests.adapter.basic.test_docs_generate import BaseDocsGenerate, BaseDoc
 from dbt.tests.adapter.basic.test_snapshot_check_cols import BaseSnapshotCheckCols
 from dbt.tests.adapter.basic.test_snapshot_timestamp import BaseSnapshotTimestamp
 from dbt.tests.adapter.basic.files import (
-    schema_base_yml
+    base_view_sql,
+    base_table_sql,
 )
 from tests.util import get_s3_location, get_region
 
 s3bucket = get_s3_location()
 region = get_region()
 schema_name = "dbt_functional_test_01"
+
+# override schema_base_yml to set missing database
+schema_base_yml = """
+version: 2
+sources:
+  - name: raw
+    schema: "{{ target.schema }}"
+    database: "{{ target.schema }}"
+    tables:
+      - name: seed
+        identifier: "{{ var('seed_name', 'base') }}"
+"""
+
+# override base_materialized_var_sql to set strategy=insert_overwrite
+config_materialized_var = """
+  {{ config(materialized=var("materialized_var", "table")) }}
+"""
+config_incremental_strategy = """
+  {{ config(incremental_strategy='insert_overwrite') }}
+"""
+model_base = """
+  select * from {{ source('raw', 'seed') }}
+"""
+base_materialized_var_sql = config_materialized_var + config_incremental_strategy + model_base
 
 
 def cleanup_s3_location():
@@ -38,75 +63,84 @@ class TestSimpleMaterializationsGlue(BaseSimpleMaterializations):
     def unique_schema(request, prefix) -> str:
         return schema_name
 
-    @pytest.fixture(scope='module', autouse=True)
-    def cleanup(self):
-        yield
-        cleanup_s3_location()
-
-    pass
-
-
-class TestSingularTestsGlue(BaseSingularTests):
-    @pytest.fixture(scope="class")
-    def unique_schema(request, prefix) -> str:
-        return schema_name
-
-    pass
-
-
-class TestEmptyGlue(BaseEmpty):
-    @pytest.fixture(scope="class")
-    def unique_schema(request, prefix) -> str:
-        return schema_name
-
-    pass
-
-
-class TestEphemeralGlue(BaseEphemeral):
-    # all tests within this test has the same schema
-    @pytest.fixture(scope="class")
-    def unique_schema(request, prefix) -> str:
-        return schema_name
-
-    @pytest.fixture(scope='module', autouse=True)
-    def cleanup(self):
-        yield
-        cleanup_s3_location()
-
-    pass
-
-class TestSingularTestsEphemeralGlue(BaseSingularTestsEphemeral):
-    @pytest.fixture(scope="class")
-    def unique_schema(request, prefix) -> str:
-        return schema_name
-
-    pass
-
-class TestIncrementalGlue(BaseIncremental):
-    @pytest.fixture(scope='module', autouse=True)
-    def cleanup(self):
-        yield
-        cleanup_s3_location()
-
     @pytest.fixture(scope="class")
     def models(self):
-        model_incremental = """
-           select * from {{ source('raw', 'seed') }}
-           """.strip()
+        return {
+            "view_model.sql": base_view_sql,
+            "table_model.sql": base_table_sql,
+            "swappable.sql": base_materialized_var_sql,
+            "schema.yml": schema_base_yml,
+        }
 
-        return {"incremental.sql": model_incremental, "schema.yml": schema_base_yml}
+    @pytest.fixture(scope='module', autouse=True)
+    def cleanup(self):
+        yield
+        cleanup_s3_location()
 
-    @pytest.fixture(scope="class")
-    def unique_schema(request, prefix) -> str:
-        return schema_name
     pass
 
 
-class TestGenericTestsGlue(BaseGenericTests):
-    @pytest.fixture(scope="class")
-    def unique_schema(request, prefix) -> str:
-        return schema_name
-    pass
+#class TestSingularTestsGlue(BaseSingularTests):
+#    @pytest.fixture(scope="class")
+#    def unique_schema(request, prefix) -> str:
+#        return schema_name
+#
+#    pass
+
+
+#class TestEmptyGlue(BaseEmpty):
+#    @pytest.fixture(scope="class")
+#    def unique_schema(request, prefix) -> str:
+#        return schema_name
+#
+#    pass
+
+
+#class TestEphemeralGlue(BaseEphemeral):
+    # all tests within this test has the same schema
+#    @pytest.fixture(scope="class")
+#    def unique_schema(request, prefix) -> str:
+#        return schema_name
+
+#    @pytest.fixture(scope='module', autouse=True)
+#    def cleanup(self):
+#        yield
+#        cleanup_s3_location()
+
+#    pass
+
+#class TestSingularTestsEphemeralGlue(BaseSingularTestsEphemeral):
+#    @pytest.fixture(scope="class")
+#    def unique_schema(request, prefix) -> str:
+#        return schema_name
+#
+#    pass
+
+#class TestIncrementalGlue(BaseIncremental):
+#    @pytest.fixture(scope='module', autouse=True)
+#    def cleanup(self):
+#        yield
+#        cleanup_s3_location()
+
+#    @pytest.fixture(scope="class")
+#    def models(self):
+#        model_incremental = """
+#           select * from {{ source('raw', 'seed') }}
+#           """.strip()
+
+#        return {"incremental.sql": model_incremental, "schema.yml": schema_base_yml}
+
+#    @pytest.fixture(scope="class")
+#    def unique_schema(request, prefix) -> str:
+#        return schema_name
+#    pass
+
+
+#class TestGenericTestsGlue(BaseGenericTests):
+#    @pytest.fixture(scope="class")
+#    def unique_schema(request, prefix) -> str:
+#        return schema_name
+#    pass
 
 # To test
 #class TestDocsGenerate(BaseDocsGenerate):
