@@ -61,7 +61,6 @@ def cleanup_s3_location():
     S3Url(s3bucket + schema_name + "/table_model/").delete_all_keys_v2(client)
     S3Url(s3bucket + schema_name + "/added/").delete_all_keys_v2(client)
     S3Url(s3bucket + schema_name + "/swappable/").delete_all_keys_v2(client)
-    # print("do nothing")
 
 
 class TestSimpleMaterializationsGlue(BaseSimpleMaterializations):
@@ -122,12 +121,6 @@ class TestEphemeralGlue(BaseEphemeral):
     def unique_schema(request, prefix) -> str:
         return schema_name
 
-    @pytest.fixture(scope="class")
-    def project_config_update(self):
-        return {
-            "name": "ephemeral",
-        }
-
     @pytest.fixture(scope='class', autouse=True)
     def cleanup(self):
         cleanup_s3_location()
@@ -148,7 +141,7 @@ class TestEphemeralGlue(BaseEphemeral):
 
         # base table rowcount
         relation = relation_from_name(project.adapter, "base")
-        # run refresh table to disable the previous parquet file paths
+        # glue: run refresh table to disable the previous parquet file paths
         project.run_sql(f"refresh table {relation}")
         result = project.run_sql(f"select count(*) as num_rows from {relation}", fetch="one")
         assert result[0] == 10
@@ -199,12 +192,6 @@ class TestIncrementalGlue(BaseIncremental):
         return {"incremental.sql": model_incremental, "schema.yml": schema_base_yml}
 
     @pytest.fixture(scope="class")
-    def project_config_update(self):
-        return {
-            "name": "incremental",
-        }
-
-    @pytest.fixture(scope="class")
     def unique_schema(request, prefix) -> str:
         return schema_name
 
@@ -216,14 +203,14 @@ class TestIncrementalGlue(BaseIncremental):
 
         # base table rowcount
         relation = relation_from_name(project.adapter, "base")
-        # run refresh table to disable the previous parquet file paths
+        # glue: run refresh table to disable the previous parquet file paths
         project.run_sql(f"refresh table {relation}")
         result = project.run_sql(f"select count(*) as num_rows from {relation}", fetch="one")
         assert result[0] == 10
 
         # added table rowcount
         relation = relation_from_name(project.adapter, "added")
-        # run refresh table to disable the previous parquet file paths
+        # glue: run refresh table to disable the previous parquet file paths
         project.run_sql(f"refresh table {relation}")
         result = project.run_sql(f"select count(*) as num_rows from {relation}", fetch="one")
         assert result[0] == 20
