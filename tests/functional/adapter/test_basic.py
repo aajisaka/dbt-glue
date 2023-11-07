@@ -16,6 +16,9 @@ from dbt.tests.adapter.basic.test_snapshot_timestamp import BaseSnapshotTimestam
 from dbt.tests.adapter.basic.files import (
     base_view_sql,
     base_table_sql,
+    base_ephemeral_sql,
+    ephemeral_view_sql,
+    ephemeral_table_sql,
 )
 from dbt.tests.util import (
     run_dbt,
@@ -121,13 +124,21 @@ class TestEphemeralGlue(BaseEphemeral):
     def unique_schema(request, prefix) -> str:
         return schema_name
 
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {
+            "ephemeral.sql": base_ephemeral_sql,
+            "view_model.sql": ephemeral_view_sql,
+            "table_model.sql": ephemeral_table_sql,
+            "schema.yml": schema_base_yml,
+        }
+
     @pytest.fixture(scope='class', autouse=True)
     def cleanup(self):
         cleanup_s3_location()
         yield
         cleanup_s3_location()
 
-    @pytest.fixture(scope="class")
     def test_ephemeral(self, project):
         # seed command
         results = run_dbt(["seed"])
@@ -145,6 +156,10 @@ class TestEphemeralGlue(BaseEphemeral):
         project.run_sql(f"refresh table {relation}")
         result = project.run_sql(f"select count(*) as num_rows from {relation}", fetch="one")
         assert result[0] == 10
+
+        # glue: run refresh table to disable the previous parquet file paths
+        relation = relation_from_name(project.adapter, "table_model")
+        project.run_sql(f"refresh table {relation}")
 
         # relations equal
         check_relations_equal(project.adapter, ["base", "view_model", "table_model"])
@@ -195,7 +210,6 @@ class TestIncrementalGlue(BaseIncremental):
     def unique_schema(request, prefix) -> str:
         return schema_name
 
-    @pytest.fixture(scope="class")
     def test_incremental(self, project):
         # seed command
         results = run_dbt(["seed"])
