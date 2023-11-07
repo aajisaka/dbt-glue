@@ -17,6 +17,13 @@ from dbt.tests.adapter.basic.files import (
     base_view_sql,
     base_table_sql,
 )
+from dbt.tests.util import (
+    run_dbt,
+    get_manifest,
+    check_relations_equal,
+    check_result_nodes_by_name,
+    relation_from_name,
+)
 from tests.util import get_s3_location, get_region
 
 s3bucket = get_s3_location()
@@ -49,12 +56,12 @@ base_materialized_var_sql = config_materialized_var + config_incremental_strateg
 
 
 def cleanup_s3_location():
-    # client = boto3.client("s3", region_name=region)
-    # S3Url(s3bucket + schema_name + "/base/").delete_all_keys_v2(client)
-    # S3Url(s3bucket + schema_name + "/table_model/").delete_all_keys_v2(client)
-    # S3Url(s3bucket + schema_name + "/added/").delete_all_keys_v2(client)
-    # S3Url(s3bucket + schema_name + "/swappable/").delete_all_keys_v2(client)
-    print("do nothing")
+    client = boto3.client("s3", region_name=region)
+    S3Url(s3bucket + schema_name + "/base/").delete_all_keys_v2(client)
+    S3Url(s3bucket + schema_name + "/table_model/").delete_all_keys_v2(client)
+    S3Url(s3bucket + schema_name + "/added/").delete_all_keys_v2(client)
+    S3Url(s3bucket + schema_name + "/swappable/").delete_all_keys_v2(client)
+    # print("do nothing")
 
 
 class TestSimpleMaterializationsGlue(BaseSimpleMaterializations):
@@ -72,75 +79,191 @@ class TestSimpleMaterializationsGlue(BaseSimpleMaterializations):
             "schema.yml": schema_base_yml,
         }
 
-    @pytest.fixture(scope='module', autouse=True)
+    @pytest.fixture(scope='class', autouse=True)
     def cleanup(self):
+        cleanup_s3_location()
         yield
         cleanup_s3_location()
 
     pass
 
 
-#class TestSingularTestsGlue(BaseSingularTests):
-#    @pytest.fixture(scope="class")
-#    def unique_schema(request, prefix) -> str:
-#        return schema_name
-#
-#    pass
+class TestSingularTestsGlue(BaseSingularTests):
+    @pytest.fixture(scope="class")
+    def unique_schema(request, prefix) -> str:
+        return schema_name
+
+    @pytest.fixture(scope='class', autouse=True)
+    def cleanup(self):
+        cleanup_s3_location()
+        yield
+        cleanup_s3_location()
+
+    pass
 
 
-#class TestEmptyGlue(BaseEmpty):
-#    @pytest.fixture(scope="class")
-#    def unique_schema(request, prefix) -> str:
-#        return schema_name
-#
-#    pass
+class TestEmptyGlue(BaseEmpty):
+    @pytest.fixture(scope="class")
+    def unique_schema(request, prefix) -> str:
+        return schema_name
+
+    @pytest.fixture(scope='class', autouse=True)
+    def cleanup(self):
+        cleanup_s3_location()
+        yield
+        cleanup_s3_location()
+
+    pass
 
 
-#class TestEphemeralGlue(BaseEphemeral):
+class TestEphemeralGlue(BaseEphemeral):
     # all tests within this test has the same schema
-#    @pytest.fixture(scope="class")
-#    def unique_schema(request, prefix) -> str:
-#        return schema_name
+    @pytest.fixture(scope="class")
+    def unique_schema(request, prefix) -> str:
+        return schema_name
 
-#    @pytest.fixture(scope='module', autouse=True)
-#    def cleanup(self):
-#        yield
-#        cleanup_s3_location()
+    @pytest.fixture(scope="class")
+    def project_config_update(self):
+        return {
+            "name": "ephemeral",
+        }
 
-#    pass
+    @pytest.fixture(scope='class', autouse=True)
+    def cleanup(self):
+        cleanup_s3_location()
+        yield
+        cleanup_s3_location()
 
-#class TestSingularTestsEphemeralGlue(BaseSingularTestsEphemeral):
-#    @pytest.fixture(scope="class")
-#    def unique_schema(request, prefix) -> str:
-#        return schema_name
-#
-#    pass
+    @pytest.fixture(scope="class")
+    def test_ephemeral(self, project):
+        # seed command
+        results = run_dbt(["seed"])
+        assert len(results) == 1
+        check_result_nodes_by_name(results, ["base"])
 
-#class TestIncrementalGlue(BaseIncremental):
-#    @pytest.fixture(scope='module', autouse=True)
-#    def cleanup(self):
-#        yield
-#        cleanup_s3_location()
+        # run command
+        results = run_dbt(["run"])
+        assert len(results) == 2
+        check_result_nodes_by_name(results, ["view_model", "table_model"])
 
-#    @pytest.fixture(scope="class")
-#    def models(self):
-#        model_incremental = """
-#           select * from {{ source('raw', 'seed') }}
-#           """.strip()
+        # base table rowcount
+        relation = relation_from_name(project.adapter, "base")
+        # run refresh table to disable the previous parquet file paths
+        project.run_sql(f"refresh table {relation}")
+        result = project.run_sql(f"select count(*) as num_rows from {relation}", fetch="one")
+        assert result[0] == 10
 
-#        return {"incremental.sql": model_incremental, "schema.yml": schema_base_yml}
+        # relations equal
+        check_relations_equal(project.adapter, ["base", "view_model", "table_model"])
 
-#    @pytest.fixture(scope="class")
-#    def unique_schema(request, prefix) -> str:
-#        return schema_name
-#    pass
+        # catalog node count
+        catalog = run_dbt(["docs", "generate"])
+        catalog_path = os.path.join(project.project_root, "target", "catalog.json")
+        assert os.path.exists(catalog_path)
+        assert len(catalog.nodes) == 3
+        assert len(catalog.sources) == 1
+
+        # manifest (not in original)
+        manifest = get_manifest(project.project_root)
+        assert len(manifest.nodes) == 4
+        assert len(manifest.sources) == 1
+
+    pass
+
+class TestSingularTestsEphemeralGlue(BaseSingularTestsEphemeral):
+    @pytest.fixture(scope="class")
+    def unique_schema(request, prefix) -> str:
+        return schema_name
+
+    @pytest.fixture(scope='class', autouse=True)
+    def cleanup(self):
+        cleanup_s3_location()
+        yield
+        cleanup_s3_location()
+
+    pass
+
+class TestIncrementalGlue(BaseIncremental):
+    @pytest.fixture(scope='class', autouse=True)
+    def cleanup(self):
+        cleanup_s3_location()
+        yield
+        cleanup_s3_location()
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        model_incremental = """
+           select * from {{ source('raw', 'seed') }}
+           """.strip()
+
+        return {"incremental.sql": model_incremental, "schema.yml": schema_base_yml}
+
+    @pytest.fixture(scope="class")
+    def project_config_update(self):
+        return {
+            "name": "incremental",
+        }
+
+    @pytest.fixture(scope="class")
+    def unique_schema(request, prefix) -> str:
+        return schema_name
+
+    @pytest.fixture(scope="class")
+    def test_incremental(self, project):
+        # seed command
+        results = run_dbt(["seed"])
+        assert len(results) == 2
+
+        # base table rowcount
+        relation = relation_from_name(project.adapter, "base")
+        # run refresh table to disable the previous parquet file paths
+        project.run_sql(f"refresh table {relation}")
+        result = project.run_sql(f"select count(*) as num_rows from {relation}", fetch="one")
+        assert result[0] == 10
+
+        # added table rowcount
+        relation = relation_from_name(project.adapter, "added")
+        # run refresh table to disable the previous parquet file paths
+        project.run_sql(f"refresh table {relation}")
+        result = project.run_sql(f"select count(*) as num_rows from {relation}", fetch="one")
+        assert result[0] == 20
+
+        # run command
+        # the "seed_name" var changes the seed identifier in the schema file
+        results = run_dbt(["run", "--vars", "seed_name: base"])
+        assert len(results) == 1
+
+        # check relations equal
+        check_relations_equal(project.adapter, ["base", "incremental"])
+
+        # change seed_name var
+        # the "seed_name" var changes the seed identifier in the schema file
+        results = run_dbt(["run", "--vars", "seed_name: added"])
+        assert len(results) == 1
+
+        # check relations equal
+        check_relations_equal(project.adapter, ["added", "incremental"])
+
+        # get catalog from docs generate
+        catalog = run_dbt(["docs", "generate"])
+        assert len(catalog.nodes) == 3
+        assert len(catalog.sources) == 1
+
+    pass
 
 
-#class TestGenericTestsGlue(BaseGenericTests):
-#    @pytest.fixture(scope="class")
-#    def unique_schema(request, prefix) -> str:
-#        return schema_name
-#    pass
+class TestGenericTestsGlue(BaseGenericTests):
+    @pytest.fixture(scope="class")
+    def unique_schema(request, prefix) -> str:
+        return schema_name
+
+    @pytest.fixture(scope='class', autouse=True)
+    def cleanup(self):
+        cleanup_s3_location()
+        yield
+        cleanup_s3_location()
+
+    pass
 
 # To test
 #class TestDocsGenerate(BaseDocsGenerate):
